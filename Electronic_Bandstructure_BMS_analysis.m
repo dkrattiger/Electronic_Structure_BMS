@@ -11,7 +11,7 @@ profile clear
 profile on
 tic
 
-addpath('Global_Files')
+addpath(genpath('libraries'))
 
 %% Check for & Create Save directories
 % ======================================================================= %
