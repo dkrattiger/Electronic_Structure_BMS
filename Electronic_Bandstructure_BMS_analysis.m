@@ -6,7 +6,7 @@
 close all; clear; clc; 
 format compact
 format shortg
-warning off all
+% warning off all
 profile clear
 profile on
 tic
@@ -21,15 +21,18 @@ load_results = true;
 
 % if save_data folder does not exist, make it
 if save_results
-    if ~exist('save_data','dir')
+%     if ~exist('save_data','dir')
         mkdir('save_data');
-    end
-    if ~exist('save_data/models','dir')
+%     end
+%     if ~exist('save_data/models','dir')
         mkdir('save_data/models');
-    end
-    if ~exist('save_data/solutions','dir')
+%     end
+%     if ~exist('save_data/solutions','dir')
         mkdir('save_data/solutions');
-    end
+%     end
+        
+    mkdir('figures')
+    
 end
 
 %% User Selected Parameters
@@ -71,7 +74,7 @@ n_FIs = [10,20,50,100];
 % n_FIs = [20];
 
 plot_disp = true;
-n_FIs = 10;
+% n_FIs = 10;
 
 % size of k-point grid for monkhorst pack
 use_ibz = false;

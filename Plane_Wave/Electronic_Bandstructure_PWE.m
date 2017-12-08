@@ -1,0 +1,405 @@
+%% 3D_Electronic_Bandstructure_FE_Code
+% ======================================================================= %
+% Dimitri Krattiger
+% 10-12-2012
+
+close all; clear; clc; 
+format compact
+format shortg
+warning off all
+profile clear
+profile on
+tic
+
+addpath('Global_Files')
+
+%% Check for & Create Save directories
+% ======================================================================= %
+
+save_results = true;
+load_results = true;
+
+% if save_data folder does not exist, make it
+if save_results
+    if ~exist('save_data','dir')
+        mkdir('save_data');
+    end
+    if ~exist('save_data/models','dir')
+        mkdir('save_data/models');
+    end
+    if ~exist('save_data/solutions','dir')
+        mkdir('save_data/solutions');
+    end
+end
+
+%% User Selected Parameters
+% ======================================================================= %
+
+
+% Solution Options
+n_curves     = 8;       % number of dispersion curves to plot
+full_disp    = true;  	% 1 = compute full dispersion, 0 = don't
+RBME_disp    = false;  	% Compute RBME dispersion
+plot_disp    = true;
+
+
+% size of k-point grid for monkhorst pack
+use_ibz = false;
+if ~plot_disp
+    n_kap_1 = 7;
+%     n_kap_1 = 12;  
+%     n_kap_1 = 16; 
+%     n_kap_1 = 20;  
+    use_ibz = true;
+end
+
+% Mode Animations
+% mode_plot = [1];     % select modes to plot. [] =  don't animate any modes
+k_sel = 1;          % k-point to plot modes at
+
+
+% units are in Ry to begin with (from pseudopotential)
+eV_Per_Ha = 27.2114; 
+eV_Per_Ry = eV_Per_Ha/2;
+Ha_Per_Ry = 1/2;
+
+
+cmap = viridis;
+colormap(cmap)
+
+% number of atoms in base primitive cell
+n_atoms_base = 2;
+
+%% Define Model dimensions
+% ======================================================================= %
+
+% real space grid dimensions
+n = 25;
+
+n_cellx = 1;        % number of repetitions of unit cell in x-direction
+n_celly = 1;        % number of repetitions of unit cell in y-direction
+n_cellz = 1;        % number of repetitions of unit cell in z-direction
+
+nx = n*n_cellx;
+ny = n*n_celly;
+nz = n*n_cellz;
+
+% n = 2;              % number of element nodes per edge
+n_bz = 1;           % number of brillouin Zones to cover
+n_atoms = n_atoms_base*n_cellx*n_celly*n_cellz;
+
+unit_select = 'atomic_units';
+% length_select = 'meters';
+switch unit_select
+    case 'angstroms'
+        a0 = 5.431;         % angstroms
+    case 'meters'
+        a0 = 5.431e-10;     % meters
+    case 'nanometers'
+        a0 = 0.543;         % nanometers
+    case 'atomic_units'
+        a0 = 10.261;        % atomic units     
+        % THIS IS THE ONE THAT WORKS CURRENTLY
+end
+
+plot_units = 'nanometers';
+switch plot_units
+    case 'angstroms'
+        conversionFactor = 5.431/a0;
+        plot_unit_string = '\r{A}';
+    case 'meters'
+        conversionFactor = 5.431e-10/a0;
+        plot_unit_string = 'm';
+    case 'nanometers'
+        conversionFactor = 0.543/a0;
+        plot_unit_string = 'nm';
+    case 'atomic_units'
+        conversionFactor = 10.261/a0;
+        plot_unit_string = 'a.u.';     
+end
+
+% lattice vectors
+a1 = (a0/2)*[0;1;1]*n_cellx;
+a2 = (a0/2)*[1;0;1]*n_celly;
+a3 = (a0/2)*[1;1;0]*n_cellz;
+
+% a1 = (a0)*[1;0;0]*n_cellx;
+% a2 = (a0)*[0;1;0]*n_celly;
+% a3 = (a0)*[0;0;1]*n_cellz;
+
+
+R = [a1,a2,a3];
+
+% reciprocal lattice vectors
+b1 = 2*pi*cross(a2,a3)/dot(a1,cross(a2,a3));
+b2 = 2*pi*cross(a3,a1)/dot(a2,cross(a3,a1));
+b3 = 2*pi*cross(a1,a2)/dot(a3,cross(a1,a2));
+
+%% Define Potential
+% ======================================================================= %
+
+% potential 1
+V1 = 0*6.5;
+
+% potential 2
+V2 = 1*6.5; 
+
+% potential 3
+V3 = 2*6.5; 
+
+% potential 4
+V4 = 3*6.5; 
+
+% silicon pseudo-potential function handle
+Vhandle_Si_Pseudo = @(r)Si_Pseudo(r,a0);
+
+% collect possible potentials into a cell array
+Vs = {V1,V2,V3,V4,Vhandle_Si_Pseudo};
+
+%% Discretize Brillouin zone
+% ======================================================================= %
+
+if plot_disp
+    kp = 2*pi/(a0)*1;
+    GammaPt     = [0;0;0];
+    XPt         = [1;0;0]*kp;
+    XprimePt    = [1;1;0]*kp;
+    LPt         = [1/2;1/2;1/2]*kp;
+    KPt         = [3/4;3/4;0]*kp;
+    WPt         = [1;1/2;0]*kp;
+    UPt         = [1;1/4;1/4]*kp;
+
+    % KappaPts = [GammaPt,XPt,MPt,RPt,GammaPt];
+    KappaPts = [LPt,GammaPt,XPt,nan(3,1),XprimePt,KPt ,GammaPt];
+
+    % determine number of BZ segments
+    i_real = ~isnan(KappaPts(1,:));
+    n_segs = sum(i_real(1:end-1) & i_real(2:end));
+
+    % n_segs = sum(~isnan(KappaPts(1,:)))-1;
+    n_kap = (n_segs)*2^4+1;    % number of kappa points
+
+    kappa = zeros(3,n_kap);
+    kappa_plot = zeros(1,n_kap);
+    count = 0;
+    for i = 1:size(KappaPts,2)-1
+        if i_real(i) && i_real(i+1)
+            count = count+1;
+            n_seg_pts = (n_kap-1)/n_segs;
+            i_kap = ((count-1)*n_seg_pts+1):(count*n_seg_pts+1);
+            kappa(:,i_kap) = ...
+                KappaPts(:,i)*ones(1,n_seg_pts+1)+(KappaPts(:,i+1)-KappaPts(:,i))*...
+                linspace(0,1,n_seg_pts+1);
+            segment_length = sqrt(sum(KappaPts(:,i+1)-KappaPts(:,i)).^2);
+            kappa_plot(i_kap) = kappa_plot(i_kap(1))+linspace(0,segment_length,n_seg_pts+1);
+        end
+    end
+    
+    kappa_use = kappa;    
+    n_kap = size(kappa_use,2);
+    w_use = ones(1,size(kappa_use,2))/size(kappa_use,2);
+else
+    n_kap_1 = 8;
+
+    n_MP = n_kap_1*ceil([1/n_cellx,1/n_celly,1/n_cellz]);
+    [~,w_ibz,kappa2,i_ibz,~] = MonkhorstPackGrid(b1,b2,b3,n_MP);
+    length(i_ibz)
+    n_kap_1^3/length(i_ibz)
+    
+    if use_ibz
+        kappa_use = kappa2(:,i_ibz);
+        w_use = w_ibz;
+    else
+        kappa_use  = kappa2;
+        w_use = ones(1,size(kappa_use,2))/size(kappa_use,2);
+    end
+    
+    n_kap = size(kappa_use,2);
+end
+
+% define grid
+a1vec = linspace(0,1,nx+1);a1vec = a1vec(1:end-1);
+a2vec = linspace(0,1,ny+1);a2vec = a2vec(1:end-1);
+a3vec = linspace(0,1,nz+1);a3vec = a3vec(1:end-1);
+
+[a1grid,a2grid,a3grid] = ndgrid(a1vec,a2vec,a3vec);
+
+coordinates = [a1grid(:),a2grid(:),a3grid(:)]*R';
+xgrid = a1(1)*a1grid + a2(1)*a2grid + a3(1)*a3grid;
+ygrid = a1(2)*a1grid + a2(2)*a2grid + a3(2)*a3grid;
+zgrid = a1(3)*a1grid + a2(3)*a2grid + a3(3)*a3grid;
+Vgrid = reshape(Si_Pseudo(coordinates',a0),[nx,ny,nz]);
+
+
+%% Form PW discretization of Hamiltonian
+
+% Number of Plane-Wave Basis functions along each dimension
+P = 10;
+Q = 10;
+R = 10;
+Vf = fftshift(fftn(Vgrid)) / (nx*ny*nz);
+% Vtest = reshape(1:(nx*ny*nz),[nx,ny,nz]);
+% pause
+
+p = [-floor(P/2):floor(P/2)];
+q = [-floor(Q/2):floor(Q/2)];
+r = [-floor(R/2):floor(R/2)];
+
+% centered location
+p0 = 1+floor(nx/2);
+q0 = 1+floor(ny/2);
+r0 = 1+floor(nz/2);
+
+H = zeros(P*Q*R,P*Q*R,n_kap);
+n_bands = 8;
+for i = 1:n_kap
+    for rrow = 1:R
+    for qrow = 1:Q
+    for prow = 1:P
+        row = (rrow-1)*Q*P + (qrow-1)*P + prow;
+        
+        if true
+            
+            % Looped assembly
+            for rcol = 1:R
+            for qcol = 1:Q
+            for pcol = 1:P
+                col = (rcol-1)*Q*P + (qcol-1)*P + pcol;
+                pfft = p(prow)-p(pcol);
+                qfft = q(qrow)-q(qcol);
+                rfft = r(rrow)-r(rcol);
+                H(row,col,i) = Vf(p0+pfft,q0+qfft,r0+rfft);
+                if row==col
+                    qvec = kappa(:,i)+ p(prow)*b1 + q(qrow)*b2 + r(rrow)*b3;
+                    H(row,col,i) = H(row,col,i) + qvec'*qvec;
+                end        
+            end
+            end
+            end
+        else
+            
+            % Vectorized Indexing to form entire row of Hamiltonian matrix
+            % at once
+            Vkeep = Vf(p0+p(prow)-p,q0+q(qrow)-q,r0+r(rrow)-r);
+            H(row,:,i) = Vkeep(:);
+            qvec = kappa(:,i)+ p(prow)*b1 + q(qrow)*b2 + r(rrow)*b3;
+            H(row,row,i) = H(row,row,i) + qvec'*qvec;
+        end
+    end
+    end
+    end
+    i
+end    
+%     figure(99)
+%     bar3(Htest)
+%     figure(99);clf
+%     subplot(1,2,1)
+%     bar3(real(H(:,:,1)));
+%     subplot(1,2,2)
+%     bar3(imag(H(:,:,1)));
+
+    
+%     pause
+   %% 
+energies = zeros(n_bands,n_kap);
+for i = 1:n_kap
+%     [PHI,L] = eigs(H(:,:,i),n_bands,'sm');
+    [PHI,L] = eig(H(:,:,i));
+    L = sort(diag(L));
+    energies(:,i) = L(1:n_bands);
+    i
+end
+
+       
+%%
+figure(2);clf
+plot(kappa_plot,sort(energies))
+set(gca,'xtick',kappa_plot(linspace(1,n_kap,n_segs+1)))
+xlim(kappa_plot([1,n_kap]))
+set(gca,'xticklabels',{'L','\Gamma','X','K','\Gamma'});
+drawnow
+pause
+
+%% plot isosurface contours for potential
+% ======================================================================= %
+
+if true
+    C2 = Si_Pseudo(coordinates',a0);
+    C2 = C2*(1/2);
+
+
+    figure(1);clf;hold on
+
+    maxC = max(C2(:));
+    minC = min(C2(:));
+    n_isosteps = 5;
+    isosteps = linspace(0,1,n_isosteps+2);isosteps = isosteps(2:end-1); 
+    isovals = minC + isosteps*(maxC-minC);
+
+    legend_entries = cell(1,length(isosteps));
+    h = zeros(1,length(isosteps));
+    for i = 1:length(isosteps)
+        isoSurfPatchStruct = isosurface(conversionFactor*reshape(coordinates(:,1),[nx,ny,nz]),...
+                                        conversionFactor*reshape(coordinates(:,2),[nx,ny,nz]),...
+                                        conversionFactor*reshape(coordinates(:,3),[nx,ny,nz]),...
+                                        reshape(C2,[nx,ny,nz]),isovals(i));
+        h(i) = patch(isoSurfPatchStruct);
+        i_color = round(1+(i-1)*(size(cmap,1)-1)/(length(isosteps)-1));
+        set(h(i),'FaceColor',cmap(i_color,:),...
+                 'EdgeColor','none',...
+                 'facealpha',isosteps(i)^(0));
+             
+         roundedval = round(isovals(i)*1e2)/1e2;
+         if roundedval == 0
+             roundedval = 0;    % this seems pointless, but it is 
+                                % necessary to avoid -0.00 in legend
+         end
+        legend_entries{i} = sprintf('%3.2f Ha',roundedval);
+    end
+    
+    % plot unit cell edges
+    xedge = a0*conversionFactor*[0, 1/2, 1/2, 0,   0, nan, 1/2, 1,   1, 1/2, 1/2, nan, 0, 1/2, nan, 1/2, 1,    nan, 1/2, 1, nan, 0,   1/2];
+    yedge = a0*conversionFactor*[0, 0,   1/2, 1/2, 0, nan, 1/2, 1/2, 1, 1,   1/2, nan, 0, 1/2, nan, 0,   1/2,  nan, 1/2, 1, nan, 1/2, 1];
+    zedge = a0*conversionFactor*[0, 1/2, 1,   1/2, 0, nan, 0,   1/2, 1, 1/2, 0,   nan, 0, 0,   nan, 1/2, 1/2,  nan, 1,   1, nan, 1/2, 1/2];
+    coordsedge = conversionFactor*[...
+        [zeros(3,1),a1,a1+a2,a2,zeros(3,1)],[nan;nan;nan]...
+        a3*ones(1,5)+[zeros(3,1),a1,a1+a2,a2,zeros(3,1)],[nan;nan;nan],...
+        zeros(3,1),a3,[nan;nan;nan],...
+        a1,a3+a1,[nan;nan;nan],...
+        a1+a2,a3+a1+a2,[nan;nan;nan],...
+        a2,a3+a2,[nan;nan;nan]];
+                        
+%                         
+%                         a1,a1+a2,a2,zeros(3,1)],[nan;nan;nan],...
+                        
+    
+    h_boundary = plot3(coordsedge(1,:),coordsedge(2,:),coordsedge(3,:),'k-','linewidth',1);hold on
+    
+    
+    
+    %Add legend
+    legend(h(end:-1:1),legend_entries(end:-1:1))
+    
+    daspect([1,1,1])
+    view([5,20]); 
+    view(3);     
+    view([-75,15])
+    
+    axis tight 
+    axis equal 
+    
+    grid on
+    
+    
+    xlabel(['x (',plot_unit_string,')']);    
+    ylabel(['y (',plot_unit_string,')']);
+    zlabel(['z (',plot_unit_string,')']);
+    set(gcf,'color','w')
+    
+
+    camlight        
+    camlight left
+    lighting gouraud
+
+    drawnow
+end

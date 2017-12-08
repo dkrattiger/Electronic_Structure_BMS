@@ -1,3 +1,5 @@
 figures/
 save_data/
 *.m~
+*.DS_Store
+*.mat
